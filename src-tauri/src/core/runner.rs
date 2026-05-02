@@ -1,6 +1,7 @@
 use std::sync::atomic::Ordering;
 
 use chrono::Utc;
+use futures_util::{stream::FuturesUnordered, StreamExt};
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
@@ -27,6 +28,7 @@ pub async fn run_test(
     let created_at = Utc::now().to_rfc3339();
     let probe_input: ProbeInput = input.clone().into();
     let target_run_cost = input.target_usd;
+    let concurrency = input.concurrency as usize;
 
     state.stop_requested.store(false, Ordering::SeqCst);
 
@@ -39,26 +41,41 @@ pub async fn run_test(
     let mut model_reported = None;
     let mut aggregate_usage_source = UsageSource::Api;
 
-    let mut index = 1;
+    let mut next_index = 1;
+    let mut in_flight = FuturesUnordered::new();
 
     let status = loop {
-        if state.stop_requested.load(Ordering::SeqCst) {
-            let status = TestRunStatus::Stopped;
-            emit_progress(
-                &app,
-                &run_id,
-                logs.len() as u32,
-                success_count,
-                failed_count,
-                estimated_cost,
-                total_tokens,
-                status,
-                None,
-            );
-            break status;
+        while in_flight.len() < concurrency
+            && can_start_request(&state, next_index, input.max_requests)
+        {
+            let request_index = next_index;
+            let request_client = client.clone();
+            let request_base_url = normalized_base_url.clone();
+            let request_input = probe_input.clone();
+            next_index += 1;
+            in_flight.push(async move {
+                (
+                    request_index,
+                    request_chat_completion(&request_client, &request_base_url, &request_input)
+                        .await,
+                )
+            });
         }
 
-        match request_chat_completion(&client, &normalized_base_url, &probe_input).await {
+        if in_flight.is_empty() {
+            if state.stop_requested.load(Ordering::SeqCst) {
+                break TestRunStatus::Stopped;
+            }
+            break TestRunStatus::Completed;
+        }
+
+        let Some((index, result)) = in_flight.next().await else {
+            break TestRunStatus::Completed;
+        };
+
+        let mut final_status = None;
+
+        match result {
             Ok(outcome) => {
                 consecutive_failures = 0;
                 success_count += 1;
@@ -75,6 +92,7 @@ pub async fn run_test(
                     request_index: index,
                     status: RequestStatus::Success,
                     latency_ms: outcome.latency_ms,
+                    first_token_latency_ms: outcome.first_token_latency_ms,
                     prompt_tokens: outcome.prompt_tokens,
                     cached_prompt_tokens: outcome.cached_prompt_tokens,
                     completion_tokens: outcome.completion_tokens,
@@ -100,16 +118,19 @@ pub async fn run_test(
                 );
 
                 if estimated_cost >= target_run_cost {
-                    break TestRunStatus::Completed;
+                    final_status = Some(TestRunStatus::Completed);
                 }
 
                 let remaining = target_run_cost - estimated_cost;
-                if remaining > 0.0 && remaining < recent_success_cost * 0.35 {
-                    break TestRunStatus::StoppedOnBudgetGuard;
+                if final_status.is_none()
+                    && remaining > 0.0
+                    && remaining < recent_success_cost * 0.35
+                {
+                    final_status = Some(TestRunStatus::StoppedOnBudgetGuard);
                 }
 
-                if success_count >= 5 && estimated_cost <= f64::EPSILON {
-                    break TestRunStatus::Failed;
+                if final_status.is_none() && success_count >= 5 && estimated_cost <= f64::EPSILON {
+                    final_status = Some(TestRunStatus::Failed);
                 }
             }
             Err(err) => {
@@ -119,6 +140,7 @@ pub async fn run_test(
                     request_index: index,
                     status: RequestStatus::Error,
                     latency_ms: 0,
+                    first_token_latency_ms: None,
                     prompt_tokens: 0,
                     cached_prompt_tokens: 0,
                     completion_tokens: 0,
@@ -144,13 +166,33 @@ pub async fn run_test(
                 );
 
                 if consecutive_failures >= 3 {
-                    break TestRunStatus::PausedOnFailures;
+                    final_status = Some(TestRunStatus::PausedOnFailures);
                 }
             }
         }
 
-        index += 1;
+        if state.stop_requested.load(Ordering::SeqCst) {
+            final_status = Some(TestRunStatus::Stopped);
+        }
+
+        if let Some(status) = final_status {
+            in_flight.clear();
+            emit_progress(
+                &app,
+                &run_id,
+                logs.len() as u32,
+                success_count,
+                failed_count,
+                estimated_cost,
+                total_tokens,
+                status,
+                None,
+            );
+            break status;
+        }
     };
+
+    logs.sort_by_key(|log| log.request_index);
 
     let report = TestRunReport {
         id: run_id,
@@ -218,6 +260,11 @@ fn emit_progress(
             latest_log,
         },
     );
+}
+
+fn can_start_request(state: &State<'_, AppState>, next_index: u32, max_requests: u32) -> bool {
+    !state.stop_requested.load(Ordering::SeqCst)
+        && (max_requests == 0 || next_index <= max_requests)
 }
 
 fn redact_error(value: &str) -> String {

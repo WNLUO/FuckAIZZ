@@ -171,14 +171,15 @@ fn markdown_report(report: &TestRunReport) -> String {
     output.push_str(&format!("- 结论提示：{}\n", verdict));
     output.push_str(&format!("- usage 来源：{:?}\n\n", report.usage_source));
     output.push_str("## 请求明细\n\n");
-    output.push_str("| # | 状态 | 耗时 ms | Prompt tokens | Cached tokens | Completion tokens | Total tokens | 原始消耗 | 理论消耗 | 摘要 / 错误 |\n");
-    output.push_str("|---|---|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    output.push_str("| # | 状态 | 耗时 ms | 首 token ms | Prompt tokens | Cached tokens | Completion tokens | Total tokens | 原始消耗 | 理论消耗 | 摘要 / 错误 |\n");
+    output.push_str("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for log in &report.request_logs {
         output.push_str(&format!(
-            "| {} | {:?} | {} | {} | {} | {} | {} | {:.8} | {:.8} | {} |\n",
+            "| {} | {:?} | {} | {} | {} | {} | {} | {} | {:.8} | {:.8} | {} |\n",
             log.request_index,
             log.status,
             log.latency_ms,
+            format_optional_u128(log.first_token_latency_ms),
             log.prompt_tokens,
             log.cached_prompt_tokens,
             log.completion_tokens,
@@ -202,6 +203,7 @@ fn csv_report(report: &TestRunReport) -> Result<String, String> {
             "request_index",
             "status",
             "latency_ms",
+            "first_token_latency_ms",
             "prompt_tokens",
             "cached_prompt_tokens",
             "completion_tokens",
@@ -221,6 +223,9 @@ fn csv_report(report: &TestRunReport) -> Result<String, String> {
                 log.request_index.to_string(),
                 format!("{:?}", log.status),
                 log.latency_ms.to_string(),
+                log.first_token_latency_ms
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
                 log.prompt_tokens.to_string(),
                 log.cached_prompt_tokens.to_string(),
                 log.completion_tokens.to_string(),
@@ -252,6 +257,12 @@ fn verdict_text(diff_ratio: Option<f64>) -> &'static str {
 fn format_optional(value: Option<f64>) -> String {
     value
         .map(|item| format!("{item:.8}"))
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn format_optional_u128(value: Option<u128>) -> String {
+    value
+        .map(|item| item.to_string())
         .unwrap_or_else(|| "-".to_string())
 }
 

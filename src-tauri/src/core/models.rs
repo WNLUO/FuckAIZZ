@@ -31,6 +31,8 @@ pub struct StartTestRunInput {
     pub current_usd: f64,
     pub target_usd: f64,
     pub max_requests: u32,
+    #[serde(default = "default_concurrency")]
+    pub concurrency: u32,
     pub balance_before: f64,
 }
 
@@ -112,6 +114,8 @@ pub struct RequestLog {
     pub request_index: u32,
     pub status: RequestStatus,
     pub latency_ms: u128,
+    #[serde(default)]
+    pub first_token_latency_ms: Option<u128>,
     pub prompt_tokens: u32,
     #[serde(default)]
     pub cached_prompt_tokens: u32,
@@ -210,6 +214,7 @@ pub struct RequestOutcome {
     pub raw_estimated_cost: f64,
     pub estimated_cost: f64,
     pub latency_ms: u128,
+    pub first_token_latency_ms: Option<u128>,
     pub response_summary: String,
 }
 
@@ -221,4 +226,8 @@ pub struct ExportResult {
 
 fn default_billing_multiplier() -> f64 {
     1.0
+}
+
+fn default_concurrency() -> u32 {
+    1
 }

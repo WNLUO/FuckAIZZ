@@ -18,6 +18,7 @@ export interface StartTestRunInput extends ProbeInput {
   current_usd: number;
   target_usd: number;
   max_requests: number;
+  concurrency: number;
   balance_before: number;
 }
 
@@ -51,6 +52,7 @@ export interface RequestLog {
   request_index: number;
   status: "success" | "error";
   latency_ms: number;
+  first_token_latency_ms?: number | null;
   prompt_tokens: number;
   cached_prompt_tokens: number;
   completion_tokens: number;

@@ -83,6 +83,9 @@ pub fn validate_start_input(input: &StartTestRunInput) -> Result<(), String> {
     if !input.current_usd.is_finite() || input.current_usd < 0.0 {
         return Err("当前用量必须是非负数字".to_string());
     }
+    if input.concurrency == 0 || input.concurrency > 20 {
+        return Err("并发数必须在 1 到 20 之间".to_string());
+    }
     if !input.balance_before.is_finite() || input.balance_before < 0.0 {
         return Err("测试前余额必须是非负数字".to_string());
     }

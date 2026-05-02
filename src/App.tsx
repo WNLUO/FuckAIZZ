@@ -63,6 +63,7 @@ const defaultForm: StartTestRunInput = {
   current_usd: 0,
   target_usd: 0.01,
   max_requests: 0,
+  concurrency: 3,
   balance_before: 0
 };
 
@@ -349,6 +350,13 @@ function Workbench(props: WorkbenchProps) {
   const finalEstimatedUsage = form.current_usd + form.target_usd;
   const totalTokens = progress?.total_tokens ?? currentReport?.request_logs.reduce((sum, log) => sum + log.total_tokens, 0) ?? 0;
   const requestCount = progress?.request_count ?? logs.length;
+  const latestFirstTokenLatencyMs = [...logs]
+    .reverse()
+    .find((log) => typeof log.first_token_latency_ms === "number")?.first_token_latency_ms;
+  const latencyLogs = logs.filter((log) => log.status === "success" && log.latency_ms > 0);
+  const averageLatencyMs = latencyLogs.length
+    ? latencyLogs.reduce((sum, log) => sum + log.latency_ms, 0) / latencyLogs.length
+    : null;
   const failureRate = requestCount > 0 ? ((progress?.failed_count ?? logs.filter((log) => log.status === "error").length) / requestCount) * 100 : 0;
   const totalLogPages = Math.max(1, Math.ceil(logs.length / LOG_PAGE_SIZE));
   const currentLogPage = Math.min(logPage, totalLogPages);
@@ -442,6 +450,21 @@ function Workbench(props: WorkbenchProps) {
               onChange={(event) => updateField("target_usd", Number(event.target.value))}
             />
             <span className="unit">USD</span>
+          </label>
+          <label className="input-with-unit">
+            <span className="field-caption">
+              并发数
+              <small>同时发起的测试请求</small>
+            </span>
+            <input
+              type="number"
+              min="1"
+              max="20"
+              step="1"
+              value={form.concurrency}
+              onChange={(event) => updateField("concurrency", Number(event.target.value))}
+            />
+            <span className="unit">路</span>
           </label>
         </div>
 
@@ -594,6 +617,8 @@ function Workbench(props: WorkbenchProps) {
           <div className="metric-grid">
             <Metric label="本次理论消耗" value={formatCurrency(estimatedCost, currency)} />
             <Metric label="请求次数" value={requestCount.toLocaleString()} />
+            <Metric label="首 token 耗时" value={formatLatencyMs(latestFirstTokenLatencyMs)} />
+            <Metric label="总平均耗时" value={formatLatencySeconds(averageLatencyMs)} />
             <Metric label="累计 tokens" value={totalTokens.toLocaleString()} />
             <Metric label="失败率" value={`${failureRate.toFixed(1)}%`} />
             <Metric label="目标进度" value={`${Math.min(100, (estimatedCost / form.target_usd) * 100 || 0).toFixed(1)}%`} />
@@ -759,6 +784,7 @@ function Workbench(props: WorkbenchProps) {
                     <th>#</th>
                     <th>状态</th>
                     <th>耗时</th>
+                    <th>首 token</th>
                     <th>Tokens</th>
                     <th>缓存</th>
                     <th>理论消耗</th>
@@ -773,6 +799,7 @@ function Workbench(props: WorkbenchProps) {
                         <span className={`status-pill ${log.status}`}>{log.status === "success" ? "成功" : "错误"}</span>
                       </td>
                       <td>{log.latency_ms}ms</td>
+                      <td>{formatLatencyMs(log.first_token_latency_ms)}</td>
                       <td>{log.total_tokens}</td>
                       <td>{log.cached_prompt_tokens}</td>
                       <td className="cost-cell">{formatCurrency(log.estimated_cost, currency)}</td>
@@ -781,7 +808,7 @@ function Workbench(props: WorkbenchProps) {
                   ))}
                   {!logs.length ? (
                     <tr>
-                      <td colSpan={7} className="table-empty">
+                      <td colSpan={8} className="table-empty">
                         暂无请求
                       </td>
                     </tr>
@@ -826,6 +853,20 @@ function normalizeError(err: unknown) {
     return err.message;
   }
   return "操作失败";
+}
+
+function formatLatencyMs(value?: number | null) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "-";
+  }
+  return `${Math.round(value)}ms`;
+}
+
+function formatLatencySeconds(value?: number | null) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "-";
+  }
+  return `${(value / 1000).toFixed(2)}s`;
 }
 
 function statusLabel(status: string) {
