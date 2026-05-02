@@ -1,6 +1,6 @@
 [package]
 name = "ai-transfer-quota-auditor"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local-first desktop auditor for AI transfer platform quota billing."
 authors = ["wnluo"]
 edition = "2021"
