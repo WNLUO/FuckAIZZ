@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "ai-transfer-quota-auditor"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "csv",
